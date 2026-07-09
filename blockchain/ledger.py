@@ -1,80 +1,62 @@
-from web3 import Web3
-import hashlib
+import os
 import json
-from datetime import datetime
-import redis
+from web3 import Web3
+import solcx
 
-# Connect to Ganache local blockchain
-w3 = Web3(Web3.HTTPProvider("http://localhost:7545"))
-cache = redis.Redis(host="localhost", port=6379, decode_responses=True)
+GANACHE_URL = os.getenv("GANACHE_URL", "http://localhost:7545")
+CONTRACT_PATH = "/app/contracts/HoneypotLogger.sol"  # Mounted in docker
 
-# Your deployed contract address (set after running deploy.py)
-CONTRACT_ADDRESS = ""  # Fill after deployment
-CONTRACT_ABI = []      # Fill after deployment
+w3 = Web3(Web3.HTTPProvider(GANACHE_URL))
+contract_instance = None
 
-class BlockchainLedger:
-    def __init__(self):
-        if not w3.is_connected():
-            raise Exception("Cannot connect to Ganache blockchain!")
+def init_blockchain():
+    global contract_instance
+    if not w3.is_connected():
+        print("Ganache not connected.")
+        return False
         
-        # Use the first Ganache account as the signer
-        self.account = w3.eth.accounts[0]
-        self.log_queue = []
-        print(f"[LEDGER] Connected to blockchain. Account: {self.account}")
-
-    def hash_log_entry(self, log_data: dict) -> str:
-        """Create SHA-256 hash of a log entry"""
-        # Sort keys for deterministic hashing
-        serialized = json.dumps(log_data, sort_keys=True)
-        return hashlib.sha256(serialized.encode()).hexdigest()
-
-    def anchor_to_blockchain(self, log_data: dict) -> str:
-        """Hash the log and write the hash to the blockchain"""
-        log_hash = self.hash_log_entry(log_data)
+    try:
+        solcx.install_solc('0.8.0')
+        compiled_sol = solcx.compile_files([CONTRACT_PATH], output_values=["abi", "bin"])
+        contract_id, contract_interface = compiled_sol.popitem()
         
-        try:
-            # Send a simple ETH transaction where data = our log hash
-            # This permanently records the hash on-chain
-            tx_hash = w3.eth.send_transaction({
-                "from": self.account,
-                "to": self.account,      # Send to self (just to record data)
-                "value": 0,
-                "data": w3.to_bytes(hexstr="0x" + log_hash),
-                "gas": 50000,
-            })
-            
-            # Also store in Redis for fast retrieval by dashboard
-            cache.lpush("honeypot:logs", json.dumps({
-                **log_data,
-                "hash": log_hash,
-                "tx_hash": tx_hash.hex(),
-                "blockchain_anchored": True,
-                "anchored_at": datetime.now().isoformat()
-            }))
-            # Keep only last 10,000 logs in Redis
-            cache.ltrim("honeypot:logs", 0, 9999)
-            
-            print(f"[LEDGER] Log anchored. Hash: {log_hash[:16]}... TX: {tx_hash.hex()[:16]}...")
-            return log_hash
-            
-        except Exception as e:
-            print(f"[LEDGER] Blockchain error: {e}")
-            # Even if blockchain fails, save to Redis
-            cache.lpush("honeypot:logs", json.dumps({
-                **log_data,
-                "hash": log_hash,
-                "blockchain_anchored": False
-            }))
-            return log_hash
+        abi = contract_interface['abi']
+        bytecode = contract_interface['bin']
+        
+        account = w3.eth.accounts[0]
+        w3.eth.default_account = account
+        
+        HoneypotLogger = w3.eth.contract(abi=abi, bytecode=bytecode)
+        tx_hash = HoneypotLogger.constructor().transact()
+        tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+        
+        contract_instance = w3.eth.contract(
+            address=tx_receipt.contractAddress,
+            abi=abi
+        )
+        print(f"Contract deployed at {tx_receipt.contractAddress}")
+        return True
+    except Exception as e:
+        print(f"Failed to deploy contract: {e}")
+        return False
 
-    def verify_log_integrity(self, log_data: dict, expected_hash: str) -> bool:
-        """Verify a log hasn't been tampered with"""
-        computed = self.hash_log_entry(log_data)
-        return computed == expected_hash
+def anchor_log(timestamp, ip, session_id, commands, attack_type, risk_score, log_hash):
+    if not contract_instance:
+        return False
+    try:
+        tx_hash = contract_instance.functions.storeLog(
+            timestamp, ip, session_id, commands, attack_type, risk_score, log_hash
+        ).transact()
+        w3.eth.wait_for_transaction_receipt(tx_hash)
+        return True
+    except Exception as e:
+        print(f"Blockchain write error: {e}")
+        return False
 
-    def get_recent_logs(self, count=100) -> list:
-        """Get recent logs from Redis cache"""
-        raw_logs = cache.lrange("honeypot:logs", 0, count - 1)
-        return [json.loads(log) for log in raw_logs]
-
-ledger = BlockchainLedger()
+def verify_log(log_hash):
+    if not contract_instance:
+        return False
+    try:
+        return contract_instance.functions.verifyLog(log_hash).call()
+    except:
+        return False

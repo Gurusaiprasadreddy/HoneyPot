@@ -1,9 +1,8 @@
-fastapi==0.138.0
-uvicorn==0.49.0
-web3==7.16.0
-redis==8.0.1
-python-dotenv==1.2.2
-websockets==15.0.1
-pydantic==2.13.4
-aiohttp==3.14.1
-httpx==0.28.1
+fastapi
+uvicorn
+redis
+web3
+py-solc-x
+prometheus-client
+passlib
+python-jose[cryptography]

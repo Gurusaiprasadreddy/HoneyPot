@@ -2,6 +2,42 @@ version: "3.9"
 
 services:
 
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9095:9090"
+    networks:
+      - honeypot-net
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3003:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+    networks:
+      - honeypot-net
+    restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    ports:
+      - "8089:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - honeypot-net
+    restart: unless-stopped
+
   ganache:
     image: trufflesuite/ganache:latest
     ports:
@@ -32,14 +68,14 @@ services:
     ports:
       - "5434:5432"
     volumes:
-      - ./decoys/vault-sql/fake_data.sql:/docker-entrypoint-initdb.d/fake_data.sql
+      - ./honeypots/database/fake_data.sql:/docker-entrypoint-initdb.d/fake_data.sql
     networks:
       - honeypot-net
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "3001:3001"
     environment:
@@ -53,7 +89,7 @@ services:
 
   shadow-shell:
     build:
-      context: ./decoys/shadow-shell
+      context: ./honeypots/ssh
       dockerfile: Dockerfile
     ports:
       - "2223:2223"
@@ -65,6 +101,10 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - shadow-shell-keys:/app/keys
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       - redis
       - backend
@@ -73,7 +113,7 @@ services:
 
   oracle-ai:
     build:
-      context: ./decoys/oracle-ai
+      context: ./honeypots/api
       dockerfile: Dockerfile
     ports:
       - "8081:8081"
@@ -83,46 +123,81 @@ services:
       - OLLAMA_HOST=host.docker.internal:11434
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    networks:
-      - honeypot-net
-
-  vault-sql:
-    build:
-      context: ./decoys/vault-sql
-      dockerfile: Dockerfile
-    ports:
-      - "5435:5435"
-    environment:
-      - BACKEND_URL=http://backend:3001
-    depends_on:
-      - backend
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks:
       - honeypot-net
 
   ledger-trap:
     build:
-      context: ./decoys/ledger-trap
+      context: ./honeypots/ethereum
       dockerfile: Dockerfile
-    ports:
-      - "8546:8546"
+    environment:
+      - BACKEND_URL=http://backend:3001
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      - backend
+    networks:
+      - honeypot-net
+
+  vault-sql:
+    build:
+      context: ./honeypots/database
+      dockerfile: Dockerfile
+    environment:
+      - BACKEND_URL=http://backend:3001
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      - backend
     networks:
       - honeypot-net
 
   forge-ci:
     build:
-      context: ./decoys/forge-ci
+      context: ./honeypots/cicd
       dockerfile: Dockerfile
     ports:
       - "9091:9091"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks:
       - honeypot-net
 
   dashboard:
     build:
-      context: ./dashboard
+      context: ./frontend
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+    depends_on:
+      - backend
+    networks:
+      - honeypot-net
+
+  web-honeypot:
+    build:
+      context: ./honeypots/web
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8082"
+    environment:
+      - BACKEND_URL=http://backend:3001
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       - backend
     networks:
@@ -130,19 +205,26 @@ services:
 
   proxy:
     build:
-      context: ./proxy
+      context: ./gateway
       dockerfile: Dockerfile
     ports:
       - "2222:2222"
       - "8080:8080"
-      - "5433:5433"
-      - "8545:8545"
+      - "3306:3306"
+      - "80:80"
       - "9090:9090"
+      - "8545:8545"
     environment:
       - BACKEND_URL=http://backend:3001
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       - shadow-shell
       - oracle-ai
+      - web-honeypot
+      - ledger-trap
       - backend
     networks:
       - honeypot-net

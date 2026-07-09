@@ -6,9 +6,10 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:3001")
 ROUTES = {
     2222: ("shadow-shell", 2223),
     8080: ("oracle-ai",    8081),
-    5433: ("vault-sql",    5435),
-    8545: ("ledger-trap",  8546),
+    3306: ("vault-sql",    3306),
+    80:   ("web-honeypot", 8082),
     9090: ("forge-ci",     9091),
+    8545: ("ledger-trap",  8545),
 }
 
 async def log_connection(ip, port):
