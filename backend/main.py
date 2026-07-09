@@ -1,7 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
-import asyncio, json, os, hashlib, time
+import asyncio, json, os, hashlib, time, requests
 import redis as redis_lib
 from datetime import datetime, timedelta
 from pydantic import BaseModel
@@ -166,6 +166,18 @@ async def receive_log(data: LogRequest):
     log_dict["mitre_attack"] = mitre
     log_dict["inference_time_ms"] = round(inference_time * 1000, 2)
     
+    # CROSS-SERVICE CORRELATION
+    ip = log_dict["attacker_ip"]
+    service_port = f"{log_dict['service']}:{log_dict['port']}"
+    r.sadd(f"honeypot:ip_tracking:{ip}", service_port)
+    r.expire(f"honeypot:ip_tracking:{ip}", 86400) # 24 hour tracking
+    
+    attacked_services = r.scard(f"honeypot:ip_tracking:{ip}")
+    if attacked_services > 1:
+        log_dict["intent"] = f"[CROSS-SERVICE APT] {log_dict['intent']}"
+        log_dict["risk_score"] = 100
+        log_dict["mitre_attack"] = f"{log_dict['mitre_attack']} + Lateral Movement"
+    
     geoip = get_mock_geoip(log_dict["attacker_ip"])
     log_dict["country"] = geoip["country_name"]
     log_dict["lat"] = geoip["lat"]
@@ -302,3 +314,26 @@ def export_data(format: str = "json", user: dict = Depends(require_role(["Admin"
             csv += f"{l.get('timestamp')},{l.get('attacker_ip')},{l.get('port')},{l.get('service')},{l.get('intent')},{l.get('risk_score')},\"{l.get('mitre_attack')}\",{l.get('country')}\n"
         return PlainTextResponse(csv, media_type="text/csv")
     return {"error": "Unsupported format"}
+
+@app.get("/api/report/{ip}")
+def generate_ai_report(ip: str):
+    raw_logs = r.lrange("honeypot:logs", 0, 999)
+    # Cap to exactly 10 logs to drastically speed up LLM processing time
+    attacker_logs = [json.loads(x) for x in raw_logs if json.loads(x).get("attacker_ip") == ip][:10]
+    
+    if not attacker_logs:
+        return {"report": f"No attack data found for IP {ip}."}
+        
+    summary = "\\n".join([f"Target: {l['service']}:{l['port']}, Intent: {l['intent']}, MITRE: {l['mitre_attack']}" for l in attacker_logs])
+    
+    prompt = f"You are a Senior Security Analyst. Write a highly professional, concise Cyber Threat Intelligence report (in Markdown) for the following attack session originating from IP {ip}. Summarize the attacker's objectives, the specific MITRE ATT&CK tactics they used, and provide 2 bullet points of mitigation advice. Do not output anything other than the report.\\n\\nLogs:\\n{summary}"
+    
+    try:
+        response = requests.post("http://host.docker.internal:11434/api/generate", json={
+            "model": "llama3",
+            "prompt": prompt,
+            "stream": False
+        }, timeout=300)
+        return {"report": response.json().get("response", "AI failed to generate response.")}
+    except Exception as e:
+        return {"report": f"AI Engine unreachable. Could not generate report. Error: {e}"}

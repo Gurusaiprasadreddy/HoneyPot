@@ -6,3 +6,4 @@ py-solc-x
 prometheus-client
 passlib
 python-jose[cryptography]
+requests

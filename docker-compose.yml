@@ -84,6 +84,8 @@ services:
     depends_on:
       - redis
       - ganache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - honeypot-net
 
@@ -105,6 +107,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    read_only: true
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
     depends_on:
       - redis
       - backend
@@ -127,6 +136,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    read_only: true
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
     networks:
       - honeypot-net
 
@@ -140,6 +156,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    read_only: true
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
     depends_on:
       - backend
     networks:
@@ -155,6 +178,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    read_only: true
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
     depends_on:
       - backend
     networks:
@@ -170,6 +200,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    read_only: true
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
     networks:
       - honeypot-net
 
@@ -198,6 +235,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    read_only: true
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
     depends_on:
       - backend
     networks:
