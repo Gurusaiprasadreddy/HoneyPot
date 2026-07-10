@@ -24,10 +24,10 @@ jobs:
         pip install pytest httpx
 
     - name: Validate Docker Compose
-      run: docker-compose config
+      run: docker compose config
 
     - name: Build Docker Containers
-      run: docker-compose build
+      run: docker compose build
 
     - name: Run Unit Tests (Mock)
       run: |
